@@ -1,4 +1,4 @@
-from .EmailAPIs import *
+﻿from .EmailAPIs import *
 
 from pathlib import Path
 
@@ -7,6 +7,7 @@ import colorama
 import logging
 import time
 import sys
+from datetime import datetime
 
 SILENT_MODE = '--silent' in sys.argv
 
@@ -14,6 +15,37 @@ class IPBlockedException(Exception):
     def __init__(self, message):
         super().__init__(message)
 
+
+def dump_current_html(driver_obj, reason: str):
+    debug_dir = Path('debug_html')
+    debug_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    safe_reason = reason.replace('/', '_').replace(' ', '-')
+    file_path = debug_dir / f'{safe_reason}_{timestamp}.html'
+    try:
+        url = ''
+        try:
+            url = driver_obj.current_url
+        except:
+            pass
+        html = ''
+        try:
+            html = driver_obj.page_source
+        except:
+            html = f'Failed to read page source on {timestamp}'
+        file_path.write_text(
+            f'Snapshot: {timestamp}' + chr(10) +
+            f'Reason: {reason}' + chr(10) +
+            f'URL: {url}' + chr(10) + chr(10) +
+            f'{html}',
+            encoding='utf-8',
+            errors='ignore'
+        )
+        logging.warning(f'[DEBUG_HTML] Saved page source at {file_path}')
+        return str(file_path)
+    except Exception as error:
+        logging.error(f'[DEBUG_HTML] Cannot save html: {error}')
+        return None
 class EsetRegister(object):
     def __init__(self, registered_email_obj: OneSecEmailAPI, eset_password: str, driver: Chrome):
         self.email_obj = registered_email_obj
@@ -46,7 +78,44 @@ class EsetRegister(object):
             console_log("Cookies were not bypassed (it doesn't affect the algorithm, I think :D)", ERROR, silent_mode=SILENT_MODE)
 
         exec_js(f"return {GET_EBID}('email')").send_keys(self.email_obj.email)
-        uCE(self.driver, f"return {CLICK_WITH_BOOL}({DEFINE_GET_EBAV_FUNCTION}('button', 'data-label', 'register-continue-button'))")
+        try:
+            uCE(self.driver, f"return {CLICK_WITH_BOOL}({DEFINE_GET_EBAV_FUNCTION}('button', 'data-label', 'register-create-account-button'))")
+        except:
+            debug_file = dump_current_html(self.driver, 'register-continue-button-missing')
+            try:
+                # Save a compact list of all visible buttons to help update selector fast.
+                for idx, button in enumerate(self.driver.find_elements('tag name', 'button')):
+                    if not button.is_displayed():
+                        continue
+                    label = (button.get_attribute('data-label') or '').strip().lower()
+                    text = (button.get_attribute('innerText') or button.text or '').strip().lower()
+                    btn_type = (button.get_attribute('type') or '').strip().lower()
+                    btn_id = (button.get_attribute('id') or '').strip()
+                    if text:
+                        logging.warning(f'[BUTTON_DEBUG] idx={idx} id={btn_id} type={btn_type} data-label={label} text={text}')
+            except Exception as button_debug_err:
+                logging.warning(f'[BUTTON_DEBUG] failed to enumerate buttons: {button_debug_err}')
+            if debug_file:
+                console_log(f'DEBUG_HTML saved: {debug_file}', ERROR, silent_mode=SILENT_MODE)
+            clicked = False
+            for _ in range(12):
+                for button in self.driver.find_elements('tag name', 'button'):
+                    try:
+                        if not button.is_displayed() or not button.is_enabled():
+                            continue
+                        label = (button.get_attribute('data-label') or '').lower()
+                        text = (button.get_attribute('innerText') or button.text or '').strip().lower()
+                        if 'register-continue-button' in label or text == 'continue' or 'continue' in label:
+                            button.click()
+                            clicked = True
+                            break
+                    except:
+                        continue
+                if clicked:
+                    break
+                time.sleep(DEFAULT_DELAY)
+            if not clicked:
+                raise RuntimeError('Unable to find/click register continue button. Snapshot for debug has been saved.')
         time.sleep(1)
         try:
             if exec_js(f"return {GET_EBAV}('div', 'data-label', 'register-email-formGroup-validation')") is not None:
@@ -518,3 +587,5 @@ def EsetVPNResetMacOS(app_name='ESET VPN', file_name='Preferences/com.eset.ESET 
             console_log(f"File '{file_name}' does not exist!!!", ERROR, silent_mode=SILENT_MODE)
     except Exception as e:
         raise RuntimeError(e)
+
+

@@ -1,5 +1,5 @@
-*.exe
-*.pyc
-*.txt
-.DS_STORE
-.venv_generator\**
+*.exe 
+*.pyc 
+*.txt 
+.DS_STORE 
+/.venv_generator/ 
